@@ -1,0 +1,6 @@
+.DS_Store
+*.local.user.js
+node_modules/
+work/
+.idea/
+.codegraph/

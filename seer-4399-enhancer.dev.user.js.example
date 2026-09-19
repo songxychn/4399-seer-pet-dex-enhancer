@@ -1,0 +1,16 @@
+// ==UserScript==
+// @name         4399 赛尔号精灵图鉴增强插件 — 本地调试
+// @namespace    seer-4399-enhancer-dev
+// @version      0.0.2
+// @description  从本机文件加载 4399 赛尔号增强脚本，保存本地文件后刷新网页生效。
+// @license      MIT
+// @match        *://news.4399.com/seer/*
+// @match        *://news.4399.com/gonglue/seer/*
+// @grant        unsafeWindow
+// @run-at       document-end
+// @noframes
+// @require      file:///ABSOLUTE/PATH/seer-4399-enhancer.user.js
+// ==/UserScript==
+
+console.info('[4399增强/调试入口] 本地依赖已执行，版本：',
+  document.getElementById('seer-plus-loaded')?.dataset.version || '此页面没有增强面板');

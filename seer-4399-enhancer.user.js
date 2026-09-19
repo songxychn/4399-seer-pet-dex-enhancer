@@ -2,8 +2,9 @@
 // @name         4399 赛尔号精灵图鉴增强插件
 // @name:en      4399 Seer Pet Dex Enhancer
 // @namespace    seer-4399-enhancer
-// @version      1.0.2
+// @version      1.0.3
 // @description  从图鉴打开计算器时自动选中对应主精灵；突出固执、保守、胆小、开朗，并展示全部性格的增强与削弱属性。
+// @description:en Automatically select the pet in the calculator from its dex page, highlight common natures, and show stat boosts and reductions.
 // @license      MIT
 // @match        *://news.4399.com/seer/*
 // @match        *://news.4399.com/gonglue/seer/*
@@ -22,7 +23,7 @@
   const STATS = ['攻击', '防御', '特攻', '特防', '速度'];
   const isCalculator = /^\/seer\/jsq\/?(?:index\.html?)?$/.test(location.pathname);
   if (document.getElementById(`${PREFIX}-loaded`)) return;
-  console.info('[4399增强] v1.0.2 已启动', location.pathname);
+  console.info('[4399增强] v1.0.3 已启动', location.pathname);
 
   function element(tag, className, text) {
     const node = document.createElement(tag);
@@ -34,7 +35,7 @@
   function installStyle() {
     const style = element('style');
     style.id = `${PREFIX}-loaded`;
-    style.dataset.version = '1.0.2';
+    style.dataset.version = '1.0.3';
     style.textContent = `
       .seer-plus-panel, .seer-plus-status { box-sizing: border-box; font: 14px/1.55 system-ui, -apple-system, "Microsoft YaHei", sans-serif; text-align: left; color: #18354a; }
       .seer-plus-panel { background: #fff; border: 1px solid #99c8df; border-radius: 12px; padding: 16px; margin: 0 0 12px; box-shadow: 0 3px 12px #145b8810; clear: both; }
@@ -149,6 +150,18 @@
         }
       } catch { /* Keep unknown dialog formats unchanged. */ }
     }
+  }
+
+  function watchReplyDialogs() {
+    // Apply on dex pages too, before their early return. Comment scripts may
+    // load later or replace their entry points after document-end.
+    guardReplyDialogs();
+    document.addEventListener('load', guardReplyDialogs, true);
+    // Also repair late inline definitions and malformed dialogs created before
+    // a replacement entry point has been wrapped. Valid replies stay open.
+    new MutationObserver(guardReplyDialogs).observe(document.documentElement, {
+      childList: true, subtree: true, attributes: true, attributeFilter: ['src'],
+    });
   }
 
   function readTarget() {
@@ -287,12 +300,13 @@
     sync();
   }
 
+  watchReplyDialogs();
+
   if (!isCalculator) {
     enhanceDetail();
     return;
   }
   installStyle();
-  guardReplyDialogs();
   const target = readTarget();
   // Stop waiting if the user has started editing; a late import would reset their inputs.
   let touched = false;

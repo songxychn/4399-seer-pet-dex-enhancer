@@ -2,9 +2,9 @@
 // @name         4399 赛尔号精灵图鉴增强插件
 // @name:en      4399 Seer Pet Dex Enhancer
 // @namespace    seer-4399-enhancer
-// @version      1.0.3
-// @description  从图鉴打开计算器时自动选中对应主精灵；突出固执、保守、胆小、开朗，并展示全部性格的增强与削弱属性。
-// @description:en Automatically select the pet in the calculator from its dex page, highlight common natures, and show stat boosts and reductions.
+// @version      1.0.4
+// @description  从图鉴打开计算器或属性相克表时自动选中对应精灵或属性；突出常用性格，并展示全部性格的增强与削弱属性。
+// @description:en Automatically select pets and types from dex links, highlight common natures, and show stat boosts and reductions.
 // @license      MIT
 // @match        *://news.4399.com/seer/*
 // @match        *://news.4399.com/gonglue/seer/*
@@ -19,11 +19,13 @@
   const page = typeof unsafeWindow === 'undefined' ? window : unsafeWindow;
   const PREFIX = 'seer-plus';
   const PARAM = 'pet';
+  const TYPE_PARAM = 'type';
   const COMMON = ['固执', '保守', '胆小', '开朗'];
   const STATS = ['攻击', '防御', '特攻', '特防', '速度'];
   const isCalculator = /^\/seer\/jsq\/?(?:index\.html?)?$/.test(location.pathname);
+  const isTypeChart = /^\/seer\/ssxxk\/?(?:index\.html?)?$/.test(location.pathname);
   if (document.getElementById(`${PREFIX}-loaded`)) return;
-  console.info('[4399增强] v1.0.3 已启动', location.pathname);
+  console.info('[4399增强] v1.0.4 已启动', location.pathname);
 
   function element(tag, className, text) {
     const node = document.createElement(tag);
@@ -35,7 +37,7 @@
   function installStyle() {
     const style = element('style');
     style.id = `${PREFIX}-loaded`;
-    style.dataset.version = '1.0.3';
+    style.dataset.version = '1.0.4';
     style.textContent = `
       .seer-plus-panel, .seer-plus-status { box-sizing: border-box; font: 14px/1.55 system-ui, -apple-system, "Microsoft YaHei", sans-serif; text-align: left; color: #18354a; }
       .seer-plus-panel { background: #fff; border: 1px solid #99c8df; border-radius: 12px; padding: 16px; margin: 0 0 12px; box-shadow: 0 3px 12px #145b8810; clear: both; }
@@ -64,6 +66,9 @@
       .seer-plus-status[data-warning="true"] { border-color: #b88836; background: #fff9eb; }
       .seer-plus-panel[hidden] { display: none !important; }
       .seer-plus-native-select { max-width: 67px; }
+      #state .item2 dt i a.seer-plus-type-link { color: inherit; text-decoration: none; }
+      #state .item2 dt i a.seer-plus-type-link:hover { color: #12659a; }
+      #state .item2 dt i a.seer-plus-type-link:focus-visible { outline: 3px solid #b05a00; outline-offset: 3px; }
       @media (max-width: 700px) { .seer-plus-quick, .seer-plus-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
     `;
     (document.head || document.documentElement).append(style);
@@ -74,8 +79,36 @@
       const url = new URL(link.href);
       return url.hostname === 'news.4399.com' && /^\/seer\/jsq\/?$/.test(url.pathname);
     });
-    if (!links.length) return;
+    const typeLinks = Array.from(document.querySelectorAll('#state .item2 dl.shuxing a.sxb[href]')).filter(link => {
+      const url = new URL(link.href);
+      return url.hostname === 'news.4399.com' && /^\/seer\/ssxxk\/?(?:index\.html?)?$/.test(url.pathname);
+    });
+    if (!links.length && !typeLinks.length) return;
     installStyle();
+    for (const link of typeLinks) {
+      const heading = link.closest('dl').querySelector('dt');
+      const label = heading?.querySelector('i');
+      const type = normalizeType(label?.textContent || heading?.querySelector('img')?.alt?.replace(/^赛尔号/, '') || '');
+      if (!type) continue;
+      const url = new URL(link.href);
+      const hash = new URLSearchParams(url.hash.slice(1));
+      hash.set(TYPE_PARAM, type);
+      url.hash = hash.toString();
+      link.href = url.href;
+      link.target = '_blank';
+      link.relList.add('noopener');
+      link.title = `在新标签页查看${type}系属性相克表`;
+      // Each evolution form owns its own attribute block and real link.
+      if (label) {
+        const textLink = element('a', `${PREFIX}-type-link`);
+        textLink.append(...label.childNodes);
+        textLink.href = link.href;
+        textLink.target = link.target;
+        textLink.rel = 'noopener';
+        textLink.title = link.title;
+        label.append(textLink);
+      }
+    }
     // The calculator stores one race-value record per article, normally its final form.
     const primaryName = document.querySelector('#state .item1 dl dt')?.textContent.trim() || '';
     function update() {
@@ -106,13 +139,88 @@
     }
   }
 
+  function normalizeType(value) {
+    return value.replace(/\s+/g, '').replace(/系$/, '');
+  }
+
+  function findTypeOption(type, options) {
+    const exact = options.filter(node => normalizeType(node.textContent) === type);
+    if (exact.length) return exact.length === 1 ? exact[0] : null;
+
+    // Learn base types from the native single-type group, not a second database.
+    const singleGroup = document.querySelector('.l_big .box_lc');
+    const tokens = new Map(options.filter(node => singleGroup?.contains(node))
+      .map(node => { const name = normalizeType(node.textContent); return [name, name]; }));
+    if (tokens.has('地面')) tokens.set('地', '地面');
+    if (tokens.has('冰')) tokens.set('冰雪', '冰');
+    function key(value) {
+      const name = normalizeType(value) === '飞龙' ? '飞行龙' : normalizeType(value);
+      if (tokens.has(name)) return JSON.stringify([tokens.get(name)]);
+      const keys = new Set();
+      for (const [prefix, canonical] of tokens) {
+        if (!name.startsWith(prefix)) continue;
+        const suffix = name.slice(prefix.length);
+        if (tokens.has(suffix)) keys.add(JSON.stringify([canonical, tokens.get(suffix)].sort()));
+      }
+      return keys.size === 1 ? keys.values().next().value : null;
+    }
+    const target = key(type);
+    if (!target) return null;
+    const matches = options.filter(node => key(node.textContent) === target);
+    return matches.length === 1 ? matches[0] : null;
+  }
+
+  function enhanceTypeChart() {
+    installStyle();
+    const hash = new URLSearchParams(location.hash.slice(1));
+    if (!hash.has(TYPE_PARAM)) return;
+    const type = normalizeType(hash.get(TYPE_PARAM));
+    if (!type || type.length > 32 || hash.getAll(TYPE_PARAM).length !== 1) {
+      showStatus('链接中的精灵属性无效，请从图鉴重新打开，或在左侧手动选择属性。', true);
+      return;
+    }
+    // Do not override a manual choice while waiting for the native script.
+    let touched = false;
+    const onChoose = event => {
+      if (event.target.closest('.big_c a[onclick]')) touched = true;
+    };
+    document.addEventListener('click', onChoose, true);
+    const deadline = Date.now() + 12000;
+    function startWhenReady() {
+      if (touched) {
+        document.removeEventListener('click', onChoose, true);
+        return;
+      }
+      const options = Array.from(document.querySelectorAll('.l_big li[id^="lf"] a'));
+      if (options.length && page.jQuery && typeof page.sh === 'function' && page.lastId != null) {
+        document.removeEventListener('click', onChoose, true);
+        const option = findTypeOption(type, options);
+        const id = option?.parentElement.id.match(/^lf(\d+)$/)?.[1];
+        if (!id || !document.getElementById(`tt${id}`) ||
+            !document.getElementById(`1rt${id}`) || !document.getElementById(`2rt${id}`)) {
+          showStatus(`属性相克表中未找到“${type}”，请在左侧手动选择属性。`, true);
+          return;
+        }
+        page.sh(Number(id));
+        console.info('[4399增强] 已选中精灵属性', type);
+        return;
+      }
+      if (Date.now() < deadline) setTimeout(startWhenReady, 150);
+      else {
+        document.removeEventListener('click', onChoose, true);
+        showStatus('属性相克表尚未就绪，未能自动选择属性。请刷新重试，或在左侧手动选择。', true);
+      }
+    }
+    startWhenReady();
+  }
+
   function showStatus(message, warning = false) {
     let status = document.getElementById(`${PREFIX}-status`);
     if (!status) {
       status = element('div', `${PREFIX}-status`);
       status.id = `${PREFIX}-status`;
       status.setAttribute('role', 'status');
-      const grid = document.querySelector('.r-bg')?.parentElement;
+      const grid = document.querySelector('.big_c') || document.querySelector('.r-bg')?.parentElement;
       if (grid) grid.before(status);
       else document.body.prepend(status);
     }
@@ -302,6 +410,10 @@
 
   watchReplyDialogs();
 
+  if (isTypeChart) {
+    enhanceTypeChart();
+    return;
+  }
   if (!isCalculator) {
     enhanceDetail();
     return;

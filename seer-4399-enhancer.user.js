@@ -143,6 +143,33 @@
     return value.replace(/\s+/g, '').replace(/系$/, '');
   }
 
+  function findTypeOption(type, options) {
+    const exact = options.filter(node => normalizeType(node.textContent) === type);
+    if (exact.length) return exact.length === 1 ? exact[0] : null;
+
+    // Learn base types from the native single-type group, not a second database.
+    const singleGroup = document.querySelector('.l_big .box_lc');
+    const tokens = new Map(options.filter(node => singleGroup?.contains(node))
+      .map(node => { const name = normalizeType(node.textContent); return [name, name]; }));
+    if (tokens.has('地面')) tokens.set('地', '地面');
+    if (tokens.has('冰')) tokens.set('冰雪', '冰');
+    function key(value) {
+      const name = normalizeType(value) === '飞龙' ? '飞行龙' : normalizeType(value);
+      if (tokens.has(name)) return JSON.stringify([tokens.get(name)]);
+      const keys = new Set();
+      for (const [prefix, canonical] of tokens) {
+        if (!name.startsWith(prefix)) continue;
+        const suffix = name.slice(prefix.length);
+        if (tokens.has(suffix)) keys.add(JSON.stringify([canonical, tokens.get(suffix)].sort()));
+      }
+      return keys.size === 1 ? keys.values().next().value : null;
+    }
+    const target = key(type);
+    if (!target) return null;
+    const matches = options.filter(node => key(node.textContent) === target);
+    return matches.length === 1 ? matches[0] : null;
+  }
+
   function enhanceTypeChart() {
     installStyle();
     const hash = new URLSearchParams(location.hash.slice(1));
@@ -167,7 +194,7 @@
       const options = Array.from(document.querySelectorAll('.l_big li[id^="lf"] a'));
       if (options.length && page.jQuery && typeof page.sh === 'function' && page.lastId != null) {
         document.removeEventListener('click', onChoose, true);
-        const option = options.find(node => normalizeType(node.textContent) === type);
+        const option = findTypeOption(type, options);
         const id = option?.parentElement.id.match(/^lf(\d+)$/)?.[1];
         if (!id || !document.getElementById(`tt${id}`) ||
             !document.getElementById(`1rt${id}`) || !document.getElementById(`2rt${id}`)) {

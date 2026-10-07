@@ -2,9 +2,9 @@
 // @name         4399 赛尔号精灵图鉴增强插件
 // @name:en      4399 Seer Pet Dex Enhancer
 // @namespace    seer-4399-enhancer
-// @version      1.0.4
-// @description  从图鉴打开计算器或属性相克表时自动选中对应精灵或属性；突出常用性格，并展示全部性格的增强与削弱属性。
-// @description:en Automatically select pets and types from dex links, highlight common natures, and show stat boosts and reductions.
+// @version      1.0.5
+// @description  图鉴联动精灵计算器及属性相克表；提供性格快捷选择、努力值清零与最大按钮，以及攻体攻速加点方案。
+// @description:en Link dex pages to calculators and type charts, select natures, and quickly adjust effort values and common stat builds.
 // @license      MIT
 // @match        *://news.4399.com/seer/*
 // @match        *://news.4399.com/gonglue/seer/*
@@ -25,7 +25,7 @@
   const isCalculator = /^\/seer\/jsq\/?(?:index\.html?)?$/.test(location.pathname);
   const isTypeChart = /^\/seer\/ssxxk\/?(?:index\.html?)?$/.test(location.pathname);
   if (document.getElementById(`${PREFIX}-loaded`)) return;
-  console.info('[4399增强] v1.0.4 已启动', location.pathname);
+  console.info('[4399增强] v1.0.5 已启动', location.pathname);
 
   function element(tag, className, text) {
     const node = document.createElement(tag);
@@ -37,7 +37,7 @@
   function installStyle() {
     const style = element('style');
     style.id = `${PREFIX}-loaded`;
-    style.dataset.version = '1.0.4';
+    style.dataset.version = '1.0.5';
     style.textContent = `
       .seer-plus-panel, .seer-plus-status { box-sizing: border-box; font: 14px/1.55 system-ui, -apple-system, "Microsoft YaHei", sans-serif; text-align: left; color: #18354a; }
       .seer-plus-panel { background: #fff; border: 1px solid #99c8df; border-radius: 12px; padding: 16px; margin: 0 0 12px; box-shadow: 0 3px 12px #145b8810; clear: both; }
@@ -46,6 +46,8 @@
       .seer-plus-panel p { margin: 4px 0 12px; padding: 0; line-height: 1.6; color: #405a6b; }
       .seer-plus-panel .seer-plus-current { color: #18354a; min-height: 22px; }
       .seer-plus-quick { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+      .seer-plus-quick[data-count="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .seer-plus-quick button[hidden] { display: none !important; }
       .seer-plus-panel button { appearance: none; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; width: 100%; height: auto; min-height: 77px; margin: 0; padding: 9px 10px; border: 1px solid #b6ccd9; border-radius: 8px; background: #f6fbff; color: #18354a; font: 13px/1.5 system-ui, sans-serif; cursor: pointer; text-align: left; }
       .seer-plus-panel button:hover { background: #e9f5ff; border-color: #377faf; }
       .seer-plus-panel button[aria-pressed="true"] { border: 2px solid #12659a; padding: 8px 9px; background: #e3f2ff; box-shadow: 0 0 0 1px #12659a20; }
@@ -65,6 +67,16 @@
       .seer-plus-status { width: 980px; max-width: 100%; margin: 12px auto; padding: 11px 15px; border: 1px solid #a8c9df; border-left: 4px solid #12659a; border-radius: 6px; background: #f5fbff; clear: both; }
       .seer-plus-status[data-warning="true"] { border-color: #b88836; background: #fff9eb; }
       .seer-plus-panel[hidden] { display: none !important; }
+      .seer-plus-effort-plans { display: flex; flex-wrap: wrap; gap: 8px; }
+      .seer-plus-effort-plans button { width: auto; flex: 1 1 120px; min-height: 60px; }
+      .seer-plus-panel .seer-plus-effort-total { margin-bottom: 0; }
+      .seer-plus-effort-total[data-warning="true"] { color: #a13335; }
+      .seer-plus-effort-row { display: flex; align-items: center; width: 84px; gap: 2px; margin: 0 auto; }
+      .gtz .seer-plus-effort-row input { box-sizing: border-box; width: 30px; height: 24px; flex: 0 0 30px; padding: 0; font-size: 12px; text-align: center; }
+      .seer-plus-effort-actions button { appearance: none; box-sizing: border-box; width: 25px; height: 24px; padding: 2px 0; border: 1px solid #99c8df; border-radius: 4px; background: #fff; color: #164b70; font: 11px/1.5 system-ui, sans-serif; cursor: pointer; }
+      .seer-plus-effort-actions button:hover { background: #e3f2ff; border-color: #377faf; }
+      .seer-plus-effort-actions button:focus-visible { outline: 3px solid #b05a00; outline-offset: 2px; }
+      .seer-plus-effort-actions button:disabled { cursor: default; opacity: .5; }
       .seer-plus-native-select { max-width: 67px; }
       #state .item2 dt i a.seer-plus-type-link { color: inherit; text-decoration: none; }
       #state .item2 dt i a.seer-plus-type-link:hover { color: #12659a; }
@@ -331,6 +343,18 @@
     }).filter(Boolean);
   }
 
+  function readRaces() {
+    return Array.from(document.querySelectorAll('.gtz ._race2'), node => {
+      const text = node.textContent.trim();
+      return /^\d+$/.test(text) ? Number(text) : NaN;
+    });
+  }
+
+  function attackChoices(current = readRaces()) {
+    if (current.length !== 6 || !current.every(Number.isFinite) || !current.some(n => n > 0)) return [];
+    return current[1] === current[3] ? [1, 3] : [current[1] > current[3] ? 1 : 3];
+  }
+
   function naturePanel(select, mode) {
     const natures = getNatures(select);
     if (!natures.length) return;
@@ -361,7 +385,7 @@
         select.value = nature.value;
         select.dispatchEvent(new Event('change', { bubbles: true }));
       });
-      buttons.push(button);
+      buttons.push({ button, nature });
       return button;
     }
 
@@ -386,17 +410,27 @@
     container.before(panel);
     select.classList.add(`${PREFIX}-native-select`);
     select.setAttribute('aria-label', `${mode === 2 ? '能力值' : '个体值'}计算性格`);
-    natures.forEach(n => { n.option.textContent = `${COMMON.includes(n.name) ? '★ ' : ''}${n.name}｜${n.effect}`; });
     const multipliers = Array.from(document.querySelectorAll('select[name="_c2"]'));
     const item = document.querySelector('select[name="item"]');
     function sync() {
+      const attacks = attackChoices();
+      const common = COMMON.filter(name => attacks.includes(name === '固执' || name === '开朗' ? 1 : 3));
+      quick.dataset.count = String(common.length);
+      natures.forEach(n => { n.option.textContent = `${common.includes(n.name) ? '★ ' : ''}${n.name}｜${n.effect}`; });
       const selected = natures.find(n => n.value === select.value);
       const custom = mode === 2 && selected && multipliers.some((s, i) => Number(s.value) !== selected.factors[i]);
       const hp = mode === 1 && item?.value === '1';
       panel.hidden = hp;
       current.textContent = custom ? '当前为自定义修正；点击性格可恢复该性格的标准修正。' : `当前：${selected ? `${selected.name} · ${selected.effect}` : '未识别'}`;
       select.title = current.textContent;
-      buttons.forEach(button => button.setAttribute('aria-pressed', String(!custom && button.dataset.nature === select.value)));
+      buttons.forEach(({ button, nature }) => {
+        const recommended = common.includes(nature.name);
+        button.hidden = quick.contains(button) && !recommended;
+        const badge = button.querySelector(`.${PREFIX}-badge`);
+        if (badge) badge.hidden = !recommended;
+        button.setAttribute('aria-label', `${nature.name}，${nature.effect}${recommended ? '，常用' : ''}`);
+        button.setAttribute('aria-pressed', String(!custom && button.dataset.nature === select.value));
+      });
     }
     function onChange() {
       sync();
@@ -405,6 +439,131 @@
     select.addEventListener('change', onChange);
     if (mode === 2) multipliers.forEach(s => s.addEventListener('change', onChange));
     else item?.addEventListener('change', onChange);
+    const observer = new MutationObserver(sync);
+    document.querySelectorAll('.gtz ._race2').forEach(node => {
+      observer.observe(node, { childList: true, characterData: true, subtree: true });
+    });
+    sync();
+  }
+
+  function effortPanel() {
+    const container = document.querySelector('.gtz');
+    const inputs = Array.from(container?.querySelectorAll('input[name="nvli2"]') || []);
+    const races = Array.from(container?.querySelectorAll('._race2') || []);
+    if (inputs.length !== 6 || races.length !== 6) return;
+    const names = ['体力', ...STATS];
+    const panel = element('section', `${PREFIX}-panel`);
+    panel.id = `${PREFIX}-effort`;
+    const title = element('h3', '', '能力值计算 · 努力值');
+    title.id = `${panel.id}-title`;
+    panel.setAttribute('aria-labelledby', title.id);
+    const plans = element('div', `${PREFIX}-effort-plans`);
+    const total = element('p', `${PREFIX}-effort-total`);
+    total.setAttribute('role', 'status');
+    panel.append(title, element('p', '', '方案会覆盖六项努力值；“最大”在剩余额度内填满，单项最多 255。'), plans, total);
+    container.before(panel);
+    const maxButtons = [];
+    let raceKey;
+    let planButtons = [];
+
+    function values() {
+      return inputs.map(input => {
+        const text = input.value.trim();
+        const value = Number(text);
+        return /^\d+$/.test(text) && Number.isInteger(value) && value <= 255 ? value : null;
+      });
+    }
+
+    function write(next) {
+      inputs.forEach((input, i) => { input.value = String(next[i]); });
+      inputs.forEach(input => {
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      sync();
+    }
+
+    function makePlan(attack, partner, split) {
+      const next = inputs.map((_, i) => i === attack || i === partner ? 255 : 0);
+      const name = `${split ? (attack === 1 ? '物攻' : '特攻') : '攻'}${partner === 0 ? '体' : '速'}`;
+      const effect = `${names[attack]} 255 + ${names[partner]} 255`;
+      const button = element('button');
+      button.type = 'button';
+      button.dataset.attack = String(attack);
+      button.dataset.partner = String(partner);
+      button.setAttribute('aria-label', `${name}，${effect}，其余清零`);
+      button.append(element('span', `${PREFIX}-name`, name), element('span', '', effect));
+      button.addEventListener('click', () => {
+        // Read the current pet even if its race-value observer has not run yet.
+        const current = readRaces();
+        const attacks = attackChoices(current);
+        if (!attacks.length) return;
+        const chosen = attacks.length === 2 ? attack : attacks[0];
+        write(inputs.map((_, i) => i === chosen || i === partner ? 255 : 0));
+      });
+      plans.append(button);
+      planButtons.push({ button, next });
+    }
+
+    function sync() {
+      const current = readRaces();
+      const key = current.join(',');
+      if (key !== raceKey) {
+        raceKey = key;
+        plans.replaceChildren();
+        planButtons = [];
+        const attacks = attackChoices(current);
+        if (attacks.length) {
+          const split = attacks.length === 2;
+          for (const partner of [0, 5]) for (const attack of attacks) makePlan(attack, partner, split);
+        } else {
+          plans.append(element('p', '', '种族值尚未就绪，暂不能选择加点方案。'));
+        }
+      }
+      const next = values();
+      const invalid = next.some(n => n === null);
+      const sum = next.reduce((sum, n) => sum + (n ?? 0), 0);
+      total.dataset.warning = String(invalid || sum > 510);
+      total.textContent = invalid ? '请输入 0–255 的整数；修正其他项后可使用“最大”。' :
+        `已分配 ${sum} / 510${sum > 510 ? '，已超出总上限，请减少加点。' : `，剩余 ${510 - sum}。`}`;
+      maxButtons.forEach((button, i) => { button.disabled = next.some((n, j) => j !== i && n === null); });
+      planButtons.forEach(({ button, next: preset }) => {
+        button.setAttribute('aria-pressed', String(!invalid && preset.every((n, i) => n === next[i])));
+      });
+    }
+
+    function edited() {
+      container.querySelectorAll('._result2').forEach(result => { result.textContent = ''; });
+      sync();
+    }
+
+    inputs.forEach((input, i) => {
+      input.setAttribute('aria-label', `${names[i]}努力值`);
+      const actions = element('div', `${PREFIX}-effort-row ${PREFIX}-effort-actions`);
+      for (const [label, maximum] of [['清零', false], ['最大', true]]) {
+        const button = element('button', '', label);
+        button.type = 'button';
+        button.setAttribute('aria-label', `${names[i]}努力值${label}`);
+        button.addEventListener('click', () => {
+          const next = values();
+          if (maximum && next.some((n, j) => j !== i && n === null)) return;
+          const used = next.reduce((sum, n, j) => sum + (j === i ? 0 : n ?? 0), 0);
+          input.value = String(maximum ? Math.max(0, Math.min(255, 510 - used)) : 0);
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        actions.append(button);
+        if (maximum) maxButtons.push(button);
+      }
+      input.before(actions);
+      actions.insertBefore(input, actions.lastElementChild);
+      input.addEventListener('input', edited);
+      input.addEventListener('change', edited);
+    });
+    // Native changePet updates race text and resets effort input properties.
+    // Observe its displayed data so search/manual/import selections all sync.
+    const observer = new MutationObserver(sync);
+    races.forEach(node => observer.observe(node, { childList: true, characterData: true, subtree: true }));
     sync();
   }
 
@@ -437,6 +596,7 @@
       if (!touched) selectTarget(target);
       else if (target) showStatus('你已开始编辑，已跳过自动选择精灵；可使用左侧搜索。');
       naturePanel(select, 2);
+      effortPanel();
       const individual = document.querySelector('select[name="characters1"]');
       if (individual) naturePanel(individual, 1);
       console.info('[4399增强] 计算器已就绪', { pet: page.petid, target: target?.id || null });

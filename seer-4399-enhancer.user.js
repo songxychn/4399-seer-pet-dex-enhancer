@@ -77,6 +77,9 @@
       .seer-plus-effort-actions button:hover { background: #e3f2ff; border-color: #377faf; }
       .seer-plus-effort-actions button:focus-visible { outline: 3px solid #b05a00; outline-offset: 2px; }
       .seer-plus-effort-actions button:disabled { cursor: default; opacity: .5; }
+      .gtz .seer-plus-live-ability .js-btn { margin-top: 6px; }
+      .gtz .seer-plus-ability-status { margin: 2px 0 0; font: 13px/17px system-ui, sans-serif; color: #405a6b; }
+      .gtz .seer-plus-ability-status[data-warning="true"] { color: #a13335; }
       .seer-plus-native-select { max-width: 67px; }
       #state .item2 dt i a.seer-plus-type-link { color: inherit; text-decoration: none; }
       #state .item2 dt i a.seer-plus-type-link:hover { color: #12659a; }
@@ -355,6 +358,76 @@
     return current[1] === current[3] ? [1, 3] : [current[1] > current[3] ? 1 : 3];
   }
 
+  function integerValue(input, min, max) {
+    const text = input.value.trim();
+    const value = Number(text);
+    return /^\d+$/.test(text) && value >= min && value <= max ? value : null;
+  }
+
+  function liveAbilityResults() {
+    const form = document.querySelector('.gtz form');
+    const submit = form?.querySelector('.js-btn');
+    const level = form?.querySelector('input[name="level2"]');
+    const individual = form?.querySelector('input[name="geti"]');
+    if (!submit || !level || !individual || typeof page.calc2 !== 'function') return;
+    const efforts = Array.from(form.querySelectorAll('input[name="nvli2"]'));
+    const factors = Array.from(form.querySelectorAll('select[name="_c2"]'));
+    const results = Array.from(form.querySelectorAll('._result2'));
+    const races = Array.from(form.querySelectorAll('._race2'));
+    if (efforts.length !== 6 || factors.length !== 5 || results.length !== 6 || races.length !== 6) return;
+
+    form.classList.add(`${PREFIX}-live-ability`);
+    const status = element('p', `${PREFIX}-ability-status`);
+    status.setAttribute('role', 'status');
+    submit.setAttribute('aria-label', '开始计算能力值');
+    submit.after(status);
+    const numericInputs = new Set([level, individual, ...efforts]);
+    let timer;
+
+    function validate() {
+      const base = readRaces();
+      const values = efforts.map(input => integerValue(input, 0, 255));
+      let issue = '';
+      if (!base.every(Number.isFinite) || !base.some(n => n > 0)) issue = '种族值尚未就绪。';
+      else if (integerValue(level, 1, 100) === null) issue = '等级须为 1–100 的整数。';
+      else if (integerValue(individual, 0, 31) === null) issue = '个体值须为 0–31 的整数。';
+      else if (values.some(n => n === null)) issue = '每项努力值须为 0–255 的整数。';
+      else if (values.reduce((sum, n) => sum + n, 0) > 510) issue = '努力值总和不能超过 510。';
+      else if (factors.some(select => ![0.9, 1, 1.1].includes(Number(select.value)))) issue = '请选择有效的性格修正。';
+
+      const message = issue ? `已暂停自动计算：${issue}` : '输入变更后自动更新能力值。';
+      if (status.textContent !== message) {
+        status.textContent = message;
+        status.dataset.warning = String(Boolean(issue));
+      }
+      if (issue) results.forEach(result => { if (result.textContent) result.textContent = ''; });
+      return !issue;
+    }
+
+    function schedule(delay = 0) {
+      clearTimeout(timer);
+      if (!validate()) return;
+      // Run after the original change handler and combine events from preset writes.
+      timer = setTimeout(() => { if (validate()) page.calc2(); }, delay);
+    }
+
+    form.addEventListener('input', event => {
+      if (numericInputs.has(event.target)) schedule(200);
+    });
+    form.addEventListener('change', event => {
+      if (numericInputs.has(event.target) || factors.includes(event.target) || event.target.name === 'characters2') schedule();
+    });
+    form.addEventListener('submit', event => {
+      clearTimeout(timer);
+      if (validate()) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }, true);
+    const observer = new MutationObserver(() => schedule());
+    races.forEach(node => observer.observe(node, { childList: true, characterData: true, subtree: true }));
+    schedule();
+  }
+
   function naturePanel(select, mode) {
     const natures = getNatures(select);
     if (!natures.length) return;
@@ -434,7 +507,7 @@
     }
     function onChange() {
       sync();
-      document.querySelectorAll(`._result${mode}`).forEach(result => { result.textContent = ''; });
+      if (mode === 1) document.querySelectorAll('._result1').forEach(result => { result.textContent = ''; });
     }
     select.addEventListener('change', onChange);
     if (mode === 2) multipliers.forEach(s => s.addEventListener('change', onChange));
@@ -467,11 +540,7 @@
     let planButtons = [];
 
     function values() {
-      return inputs.map(input => {
-        const text = input.value.trim();
-        const value = Number(text);
-        return /^\d+$/.test(text) && Number.isInteger(value) && value <= 255 ? value : null;
-      });
+      return inputs.map(input => integerValue(input, 0, 255));
     }
 
     function write(next) {
@@ -532,11 +601,6 @@
       });
     }
 
-    function edited() {
-      container.querySelectorAll('._result2').forEach(result => { result.textContent = ''; });
-      sync();
-    }
-
     inputs.forEach((input, i) => {
       input.setAttribute('aria-label', `${names[i]}努力值`);
       const actions = element('div', `${PREFIX}-effort-row ${PREFIX}-effort-actions`);
@@ -557,8 +621,8 @@
       }
       input.before(actions);
       actions.insertBefore(input, actions.lastElementChild);
-      input.addEventListener('input', edited);
-      input.addEventListener('change', edited);
+      input.addEventListener('input', sync);
+      input.addEventListener('change', sync);
     });
     // Native changePet updates race text and resets effort input properties.
     // Observe its displayed data so search/manual/import selections all sync.
@@ -597,6 +661,7 @@
       else if (target) showStatus('你已开始编辑，已跳过自动选择精灵；可使用左侧搜索。');
       naturePanel(select, 2);
       effortPanel();
+      liveAbilityResults();
       const individual = document.querySelector('select[name="characters1"]');
       if (individual) naturePanel(individual, 1);
       console.info('[4399增强] 计算器已就绪', { pet: page.petid, target: target?.id || null });

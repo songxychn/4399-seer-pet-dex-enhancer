@@ -2,7 +2,7 @@
 // @name         4399 赛尔号精灵图鉴增强插件
 // @name:en      4399 Seer Pet Dex Enhancer
 // @namespace    seer-4399-enhancer
-// @version      1.0.5
+// @version      1.0.6
 // @description  图鉴联动精灵计算器及属性相克表；提供性格快捷选择、努力值清零与最大按钮，以及攻体攻速加点方案。
 // @description:en Link dex pages to calculators and type charts, select natures, and quickly adjust effort values and common stat builds.
 // @license      MIT
@@ -25,7 +25,7 @@
   const isCalculator = /^\/seer\/jsq\/?(?:index\.html?)?$/.test(location.pathname);
   const isTypeChart = /^\/seer\/ssxxk\/?(?:index\.html?)?$/.test(location.pathname);
   if (document.getElementById(`${PREFIX}-loaded`)) return;
-  console.info('[4399增强] v1.0.5 已启动', location.pathname);
+  console.info('[4399增强] v1.0.6 已启动', location.pathname);
 
   function element(tag, className, text) {
     const node = document.createElement(tag);
@@ -37,7 +37,7 @@
   function installStyle() {
     const style = element('style');
     style.id = `${PREFIX}-loaded`;
-    style.dataset.version = '1.0.5';
+    style.dataset.version = '1.0.6';
     style.textContent = `
       .seer-plus-panel, .seer-plus-status { box-sizing: border-box; font: 14px/1.55 system-ui, -apple-system, "Microsoft YaHei", sans-serif; text-align: left; color: #18354a; }
       .seer-plus-panel { background: #fff; border: 1px solid #99c8df; border-radius: 12px; padding: 16px; margin: 0 0 12px; box-shadow: 0 3px 12px #145b8810; clear: both; }

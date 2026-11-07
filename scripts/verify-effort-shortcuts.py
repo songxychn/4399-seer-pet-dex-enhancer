@@ -1,4 +1,4 @@
-"""Live headless regression for effort and nature shortcuts on the calculator.
+"""Live headless regression for shortcuts and live ability values on the calculator.
 
 python3 scripts/verify-effort-shortcuts.py --output /tmp/seer-effort-results.json
 Requires agent-browser and its headless browser. Injects after page load;
@@ -53,9 +53,11 @@ def main():
 
     try:
         cli('open', 'https://news.4399.com/seer/jsq/#pet=p106')
-        cli('wait', '--fn', 'window.pets && window.petid && typeof window.changePet === "function"')
+        cli('wait', '--fn', 'window.pets && window.petid && typeof window.calc2 === "function"')
+        js('''window.nativeCalc2 = window.calc2; window.abilityCalls = 0;
+          window.calc2 = function() { window.abilityCalls++; return window.nativeCalc2(); };''')
         js(script)
-        cli('wait', '--fn', 'document.querySelectorAll(".seer-plus-effort-actions").length === 6')
+        cli('wait', '--fn', 'window.abilityCalls === 1 && document.querySelectorAll(".seer-plus-effort-actions").length === 6')
         js('''window.effortTest = {
           inputs: Array.from(document.querySelectorAll('input[name="nvli2"]')),
           read() { return this.inputs.map(n => Number(n.value)); },
@@ -65,6 +67,17 @@ def main():
           button(i, max) { return document.querySelectorAll('.seer-plus-effort-actions')[i].querySelectorAll('button')[max ? 1 : 0]; },
           plan(attack, partner) { return document.querySelector('#seer-plus-effort button[data-attack="'+attack+'"][data-partner="'+partner+'"]'); },
           results() { return Array.from(document.querySelectorAll('._result2')).map(n=>n.textContent); },
+          status() { return document.querySelector('.seer-plus-ability-status').textContent; },
+          matchesNative() {
+            const actual = this.results(); nativeCalc2();
+            return actual.length===6 && actual.every(n=>n!=='' && Number.isFinite(Number(n))) &&
+              JSON.stringify(actual)===JSON.stringify(this.results());
+          },
+          settle(ms=40) { return new Promise(resolve=>setTimeout(resolve, ms)); },
+          edit(name, value, event='input') {
+            const field=document.querySelector('.gtz [name="'+name+'"]');
+            field.value=String(value); field.dispatchEvent(new Event(event,{bubbles:true}));
+          },
           warning() { return document.querySelector('.seer-plus-effort-total').dataset.warning === 'true'; },
           common(mode) { return [...document.querySelectorAll('#seer-plus-nature-'+mode+' .seer-plus-quick button')]
             .filter(b=>!b.hidden).map(b=>b.getAttribute('aria-label').split('，')[0]).join(','); },
@@ -74,6 +87,9 @@ def main():
           }); },
           equal(values) { return JSON.stringify(this.read()) === JSON.stringify(values); }
         };''')
+        check('initial import computes all six values without a manual submit', '''
+          petid==='p106' && abilityCalls===1 && effortTest.matchesNative() &&
+          effortTest.status().includes('自动更新能力值')''')
         check('six labeled clear/max pairs, special attack plans after import', '''(() => {
           const buttons = [...document.querySelectorAll('.seer-plus-effort-actions button')];
           return petid==='p106' && buttons.length===12 && buttons.every((b,i)=>b.type==='button' &&
@@ -119,37 +135,82 @@ def main():
           t.fill(['abc',0,0,0,0,0]); t.button(0,false).click();
           return t.equal([0,0,0,0,0,0]) && !t.warning();
         })()''')
-        check('special attack presets overwrite all six, clear only ability results, retain other settings', '''(() => {
+        check('presets overwrite all six, recalculate once, and retain unrelated settings', '''(async () => {
           const t=effortTest;
           document.querySelector('input[name="level2"]').value='75';
           document.querySelector('input[name="geti"]').value='25';
           document.querySelector('#seer-plus-nature-2 button[data-nature="5"]').click();
           document.querySelector('input[name="nvli1"]').value='123';
           document.querySelector('._result1').textContent='keep';
-          t.fill([1,2,3,4,5,6]); calc2(); t.plan(3,0).click();
-          const hp=t.equal([255,0,0,255,0,0]) && t.results().every(n=>n==='');
+          t.fill([1,2,3,4,5,6]); const calls=abilityCalls; t.plan(3,0).click();
+          await t.settle();
+          const hp=t.equal([255,0,0,255,0,0]) && abilityCalls===calls+1 && t.matchesNative();
+          const previous=t.results().join();
           t.plan(3,5).click();
-          return hp && t.equal([0,0,0,255,0,255]) &&
+          await t.settle();
+          return hp && t.equal([0,0,0,255,0,255]) && abilityCalls===calls+2 &&
+            t.results().join()!==previous && t.matchesNative() &&
             document.querySelector('input[name="level2"]').value==='75' &&
             document.querySelector('input[name="geti"]').value==='25' &&
             document.querySelector('select[name="characters2"]').value==='5' &&
             document.querySelector('input[name="nvli1"]').value==='123' &&
             document.querySelector('._result1').textContent==='keep';
         })()''')
-        check('preset calculation matches manual allocation through native form submission', '''(() => {
-          const t=effortTest; t.fill([255,0,0,255,0,0]); calc2(); const manual=t.results();
-          t.fill([1,2,3,4,5,6]); t.plan(3,0).click();
+        check('manual submit still works and consumes a pending live refresh', '''(async () => {
+          const t=effortTest; const calls=abilityCalls; t.fill([255,0,0,255,0,0]);
           document.querySelector('.gtz .js-btn').click();
-          return manual.every(n=>n!=='' && Number.isFinite(Number(n))) &&
-            JSON.stringify(manual)===JSON.stringify(t.results());
+          const immediate=abilityCalls===calls+1 && t.matchesNative();
+          await t.settle(260);
+          return immediate && abilityCalls===calls+1;
+        })()''')
+        check('typing in effort, level and individual value refreshes after a pause', '''(async () => {
+          const t=effortTest;
+          for (const [name, first, last] of [['nvli2', 0, 63], ['level2', 8, 80], ['geti', 2, 20]]) {
+            const calls=abilityCalls, previous=t.results().join();
+            t.edit(name, first); t.edit(name, last);
+            if(abilityCalls!==calls) return false;
+            await t.settle(260);
+            if(abilityCalls!==calls+1 || t.results().join()===previous || !t.matchesNative()) return false;
+          }
+          return true;
+        })()''')
+        check('shortcuts, native nature selection and custom coefficients update live', '''(async () => {
+          const t=effortTest;
+          const actions=[() => t.button(0,false).click(), () => t.button(0,true).click(),
+            () => document.querySelector('#seer-plus-nature-2 .seer-plus-quick button[data-nature="9"]').click(),
+            () => t.edit('characters2', 5, 'change'), () => t.edit('_c2', '1.1', 'change')];
+          for (const act of actions) {
+            const calls=abilityCalls, previous=t.results().join(); act(); await t.settle();
+            if(abilityCalls!==calls+1 || t.results().join()===previous || !t.matchesNative()) return false;
+          }
+          return true;
+        })()''')
+        check('invalid input cancels pending calculations, clears results and recovers silently', '''(async () => {
+          const t=effortTest; const calls=abilityCalls;
+          const messages=[]; const alertBefore=window.alert; window.alert=(message)=>messages.push(message);
+          try {
+            t.edit('level2', 8); t.edit('level2', '');
+            if(!t.status().includes('等级') || t.results().some(Boolean)) return false;
+            await t.settle(260);
+            if(abilityCalls!==calls) return false;
+            t.edit('level2', 100, 'change'); t.edit('geti', 32);
+            if(!t.status().includes('个体值')) return false;
+            t.edit('geti', 0, 'change'); t.fill([256,0,0,0,0,0]);
+            if(!t.status().includes('每项努力值')) return false;
+            t.fill([255,255,1,0,0,0]); document.querySelector('.gtz .js-btn').click();
+            if(!t.status().includes('510') || t.results().some(Boolean) || abilityCalls!==calls) return false;
+            t.button(2,false).click(); await t.settle();
+            return abilityCalls===calls+1 && t.matchesNative() && messages.length===0 &&
+              t.status().includes('自动更新能力值');
+          } finally { window.alert=alertBefore; }
         })()''')
         js('''window.effortTestPets = {
           physical: Object.values(pets).find(p=>Number(p.gongji)>Number(p.mougong)).pid,
           tie: Object.values(pets).find(p=>Number(p.gongji)>0 && Number(p.gongji)===Number(p.mougong)).pid
         }; window.natureBeforeSwitch=effortTest.natureState(); changePet(effortTestPets.physical);''')
-        cli('wait', '--fn', 'document.querySelectorAll("#seer-plus-effort button").length===2 && !!effortTest.plan(1,0)')
+        cli('wait', '--fn', 'document.querySelectorAll("#seer-plus-effort button").length===2 && !!effortTest.plan(1,0) && effortTest.results().every(Boolean)')
         check('switching to physical attacker updates plans and resets total', '''(() => {
-          const t=effortTest; const reset=t.equal([0,0,0,0,0,0]) &&
+          const t=effortTest; const reset=t.equal([0,0,0,0,0,0]) && t.matchesNative() &&
             document.querySelector('.seer-plus-effort-total').textContent.includes('已分配 0 / 510');
           t.plan(1,0).click(); const hp=t.equal([255,255,0,0,0,0]); t.plan(1,5).click();
           return reset && hp && t.equal([0,255,0,0,0,255]);
@@ -185,10 +246,24 @@ def main():
         })()''')
         js('changePet("p106")')
         cli('wait', '--fn', 'document.querySelectorAll("#seer-plus-effort button").length===2 && !!effortTest.plan(3,0)')
-        check('tie-to-special switch restores two plans; manual edit deselects preset', '''(() => {
-          const t=effortTest; t.plan(3,0).click(); calc2(); t.fill([254,0,0,255,0,0]);
+        check('tie-to-special switch restores two plans; manual edit deselects preset', '''(async () => {
+          const t=effortTest; t.plan(3,0).click(); t.fill([254,0,0,255,0,0]); await t.settle(260);
           return document.querySelectorAll('#seer-plus-effort button[aria-pressed="true"]').length===0 &&
-            t.results().every(n=>n==='') && !t.warning();
+            t.matchesNative() && !t.warning();
+        })()''')
+        check('individual value calculator still requires manual submission', '''(async () => {
+          const t=effortTest;
+          const level=document.querySelector('input[name="level1"]');
+          const stat=document.querySelector('input[name="nengli"]');
+          const effort=document.querySelector('input[name="nvli1"]');
+          const result=document.querySelector('._result1');
+          for(const [input,value] of [[level,100],[stat,400],[effort,0]]) {
+            input.value=String(value); input.dispatchEvent(new Event('input',{bubbles:true}));
+          }
+          await t.settle(260);
+          if(result.textContent!=='') return false;
+          document.querySelector('.nlz .js-btn').click();
+          return result.textContent!=='' && Number.isFinite(Number(result.textContent));
         })()''')
         check('returning to special attacker filters both panels; nature selections remain independent', '''(() => {
           const t=effortTest;
@@ -203,12 +278,14 @@ def main():
           item.value='1'; item.dispatchEvent(new Event('change',{bubbles:true}));
           return selected && document.querySelector('#seer-plus-nature-1').hidden;
         })()''')
-        check('table, submit button, and individual calculator do not overlap', '''(() => {
+        check('table, submit button, live status, and individual calculator do not overlap', '''(() => {
           const container=document.querySelector('.gtz').getBoundingClientRect();
           const table=document.querySelector('.gtz table').getBoundingClientRect();
           const submit=document.querySelector('.gtz .js-btn').getBoundingClientRect();
+          const status=document.querySelector('.seer-plus-ability-status').getBoundingClientRect();
           const individual=document.querySelector('.nlz').getBoundingClientRect();
-          return table.bottom <= submit.top && submit.bottom <= container.bottom && container.bottom <= individual.top;
+          return table.bottom <= submit.top && submit.bottom <= status.top &&
+            status.bottom <= container.bottom && container.bottom <= individual.top;
         })()''')
         check('input and both shortcuts share one line without widening cells or increasing table height', '''(() => {
           const rows=[...document.querySelectorAll('.seer-plus-effort-row')];
@@ -229,16 +306,17 @@ def main():
           effortTest.common(mode)==='' && document.querySelectorAll('#seer-plus-nature-'+mode+' .seer-plus-grid button').length===25 &&
           ![...document.querySelector('select[name="characters'+mode+'"]') .options].some(n=>n.textContent.startsWith('★'))
         )''')
-        check('missing race data hides presets but retains single-stat shortcuts', '''(() => {
+        check('missing race data pauses live results but retains single-stat shortcuts', '''(() => {
           const t=effortTest; t.fill([0,0,0,0,0,0]); t.button(0,true).click();
-          return t.equal([255,0,0,0,0,0]) &&
+          return t.equal([255,0,0,0,0,0]) && t.status().includes('种族值尚未就绪') && t.results().every(n=>n==='') &&
             document.querySelector('#seer-plus-effort').textContent.includes('种族值尚未就绪');
         })()''')
         js('changePet("p106")')
         cli('wait', '--fn', 'document.querySelectorAll("#seer-plus-effort button").length===2')
         check('reinjection does not duplicate controls', script + '''
           document.querySelectorAll('#seer-plus-effort').length===1 &&
-          document.querySelectorAll('.seer-plus-effort-actions button').length===12;
+          document.querySelectorAll('.seer-plus-effort-actions button').length===12 &&
+          document.querySelectorAll('.seer-plus-ability-status').length===1;
         ''')
     finally:
         save()
